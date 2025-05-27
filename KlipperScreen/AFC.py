@@ -393,18 +393,49 @@ class Panel(ScreenPanel):
 
     def init_layout(self):
         # Extruder Tools
-        extruder_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        extruder_tools = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, homogeneous=False, spacing=5)
-        extruder_tools.set_size_request(-1, 20)  # Fixed height
-        extruder_tools.set_hexpand(True)
-        extruder_tools.set_vexpand(False)
 
         current_lane = next((lane for lane in self.afc_lane_data if lane.name == self.current_load), None)
 
-        # Create labels
-        extruder_label = Gtk.Label(label=f"Extruder: {current_lane.extruder}" if current_lane else "Extruder: N/A")
-        buffer_label = Gtk.Label(label=f"Buffer: {current_lane.buffer} - {current_lane.buffer_status}" if current_lane else "Buffer: N/A")
-        loaded_label = Gtk.Label(label=f"Loaded: {self.current_load}" if self.current_load else "Loaded: N/A")
+        # Determine the layout based on vertical mode
+        if self._screen.vertical_mode:
+            # Create a vertical container for vertical mode
+            extruder_container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            extruder_container.set_hexpand(True)
+            extruder_container.set_vexpand(False)
+
+            # Create labels
+            extruder_label = Gtk.Label(label=f"Extruder: {current_lane.extruder}" if current_lane else "Extruder: N/A")
+            buffer_label = Gtk.Label(label=f"Buffer: {current_lane.buffer} - {current_lane.buffer_status}" if current_lane else "Buffer: N/A")
+            loaded_label = Gtk.Label(label=f"Loaded: {self.current_load}" if self.current_load else "Loaded: N/A")
+
+            # Add extruder and buffer labels to a horizontal box
+            extruder_buffer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+            extruder_buffer_box.set_hexpand(True)
+            extruder_buffer_box.set_vexpand(False)
+            extruder_buffer_box.pack_start(extruder_label, True, True, 0)
+            extruder_buffer_box.pack_start(buffer_label, True, True, 0)
+
+            # Add the horizontal box and the loaded label to the vertical container
+            extruder_container.pack_start(extruder_buffer_box, False, False, 0)
+            extruder_container.pack_start(loaded_label, False, False, 0)
+
+            # Center the loaded label
+            loaded_label.set_halign(Gtk.Align.CENTER)
+        else:
+            # Create a horizontal container for horizontal mode
+            extruder_container = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=5)
+            extruder_container.set_hexpand(True)
+            extruder_container.set_vexpand(False)
+
+            # Create labels
+            extruder_label = Gtk.Label(label=f"Extruder: {current_lane.extruder}" if current_lane else "Extruder: N/A")
+            buffer_label = Gtk.Label(label=f"Buffer: {current_lane.buffer} - {current_lane.buffer_status}" if current_lane else "Buffer: N/A")
+            loaded_label = Gtk.Label(label=f"Loaded: {self.current_load}" if self.current_load else "Loaded: N/A")
+
+            # Add all labels to the horizontal container
+            extruder_container.pack_start(extruder_label, True, True, 0)
+            extruder_container.pack_start(buffer_label, True, True, 0)
+            extruder_container.pack_start(loaded_label, True, True, 0)
 
         # Add styling and alignment
         for label, key in zip(
@@ -416,11 +447,10 @@ class Panel(ScreenPanel):
             label.set_halign(Gtk.Align.FILL)
             label.set_ellipsize(Pango.EllipsizeMode.END)
             self.labels[key] = label
-            extruder_tools.pack_start(label, True, True, 0)
 
-        extruder_container.pack_start(extruder_tools, True, True, 0)
+        # Attach the container to the grid
         self.grid.attach(extruder_container, 0, 0, 4, 1)
-        extruder_tools.get_style_context().add_class("button_active")
+        extruder_container.get_style_context().add_class("button_active")
 
         # Units and Lanes
         self.create_unit_lane_layout()
@@ -502,7 +532,7 @@ class Panel(ScreenPanel):
             # Dynamically calculate the number of lanes per row based on screen width
             logging.info(f"Screen width: {self._screen.width}")
             lane_box_width = 150 + 10  # Lane frame width + margins (adjust as needed)
-            lanes_per_row = max(1, (self._screen.width - 150) // lane_box_width)  # At least one lane per row
+            lanes_per_row = 2 if self._screen.vertical_mode else max(1, (self._screen.width - 150) // lane_box_width)  # At least one lane per row
             logging.info(f"screen width {self._screen.width}")
 
             for j, lane in enumerate(unit.lanes):
@@ -781,7 +811,13 @@ class Panel(ScreenPanel):
         controls_box.pack_start(toolchange_combined_label, False, False, 10)
 
         alignment = Gtk.Alignment.new(0.5, 1.0, 1.0, 0.0)
-        alignment.add(controls_box)
+        if self._screen.vertical_mode:
+            ctrl_scrolled_window = self._gtk.ScrolledWindow()
+            ctrl_scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.NEVER)
+            ctrl_scrolled_window.add(controls_box)
+            alignment.add(ctrl_scrolled_window)
+        else:
+            alignment.add(controls_box)
 
         return alignment
 
