@@ -78,7 +78,7 @@ class Hub:
         self.afc_bowden_length = afc_bowden_length
 
 class Buffer:
-    def __init__(self, state, lanes, enabled, belay):
+    def __init__(self, state, lanes, enabled, belay=None):
         self.state = state
         self.lanes = lanes
         self.enabled = enabled
@@ -206,13 +206,6 @@ class Panel(ScreenPanel):
             klipperscreendir, "afc_icons")
         self.theme_path = os.path.join(
             klipperscreendir, "styles", AFClane.theme_path, "style.css")
-        css_provider = Gtk.CssProvider()
-        css_provider.load_from_path(self.theme_path)
-
-        Gtk.StyleContext.add_provider_for_screen(
-            Gdk.Screen.get_default(),
-            css_provider,
-            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
 
         self.reset_ui()
 
@@ -1043,6 +1036,7 @@ class Panel(ScreenPanel):
         # Add buttons to the box
         for t_value in options:
             item = Gtk.ModelButton(label=t_value)
+            item.get_style_context().add_class("scroll_button")
             item.set_halign(Gtk.Align.START)
             item.get_style_context().add_class("large-button")
 
@@ -1103,6 +1097,7 @@ class Panel(ScreenPanel):
         # Create buttons for each option
         for lane_name in options:
             item = Gtk.ModelButton(label=lane_name)
+            item.get_style_context().add_class("scroll_button")
             item.set_name("lane-inf-item")
             item.set_halign(Gtk.Align.FILL)
             item.get_style_context().add_class("large-button")
@@ -1768,7 +1763,7 @@ class Panel(ScreenPanel):
         main_box.set_vexpand(True)
 
         # Scrollable container for input boxes
-        self.spool_scroll = self._gtk.ScrolledWindow()
+        self.spool_scroll = Gtk.ScrolledWindow()
         self.spool_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
         self.spool_scroll.set_hexpand(True)
         self.spool_scroll.set_vexpand(True)
@@ -2174,7 +2169,7 @@ class Panel(ScreenPanel):
                 grid.attach(status_dot, col_index * 3 + 1, row_index, 1, 1)  # Dot column
 
         # Add the grid to a scrolled window
-        scrolled_window = self._gtk.ScrolledWindow()
+        scrolled_window = Gtk.ScrolledWindow()
         scrolled_window.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         scrolled_window.set_hexpand(True)
         scrolled_window.set_vexpand(True)
@@ -2255,6 +2250,9 @@ dialog button {
     background-color: rgba(20, 20, 20, 0.85);
     color: white;
     border-radius: 10px;
+}
+.scroll_button{
+    background-color: rgba(35, 35, 35, 0.85);
 }
 .bold-text {
     font-weight: bold;

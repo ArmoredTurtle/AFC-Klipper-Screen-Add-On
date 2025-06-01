@@ -10,6 +10,7 @@ klipperscreen_dir=$HOME/KlipperScreen
 klipperscreen_conf_file=$printer_config/KlipperScreen.conf
 afc_klipperscreen_path=$HOME/AFC-Klipper-Screen-Add-On
 test_mode=False
+min_version="v0.4.5"
 
 function show_help() {
   echo "Usage: $0 [-p <printer_config>] [-k <klipperscreen_dir>] [-h]"
@@ -17,6 +18,26 @@ function show_help() {
   echo "  -p <printer_config>    Path to the printer configuration directory (default: $HOME/printer_data/config)"
   echo "  -k <klipperscreen_dir> Path to the KlipperScreen directory (default: $HOME/KlipperScreen)"
   echo "  -h                     Show this help message"
+}
+
+function checkKlipperscreen() {
+  if [ ! -d "$klipperscreen_dir/.git" ]; then
+    echo "[ERROR] KlipperScreen repository not found at $klipperscreen_dir."
+    exit 1
+  fi
+
+  git -C "$klipperscreen_dir" fetch --tags
+
+  local current_version
+  current_version=$(git -C "$klipperscreen_dir" describe --tags --abbrev=0)
+
+  if [[ "$(printf '%s\n' "$min_version" "$current_version" | sort -V | head -n1)" != "$min_version" ]]; then
+    echo "[ERROR] KlipperScreen version $current_version is lower than the required $min_version."
+    echo "[ERROR] Please update KlipperScreen to at least version $min_version"
+    exit 1
+  fi
+
+  echo "[INFO] KlipperScreen version $current_version meets the minimum requirement of $min_version."
 }
 
 function checks() {
@@ -34,6 +55,7 @@ function checks() {
     echo "[ERROR] KlipperScreen directory is not installed or detected in $klipperscreen_dir."
     exit 1
   fi
+  checkKlipperscreen
   if [ ! -f "$printer_config"/KlipperScreen.conf ]; then
     echo "[ERROR] KlipperScreen.conf is missing. Expected path: $printer_config/KlipperScreen.conf."
     exit 1
@@ -76,12 +98,9 @@ function clone_repo() {
   fi
 }
 
-function choose_theme_and_link_icons() {
+function link_icons() {
   local styles_dir="$klipperscreen_dir/styles"
   local icons_dir="$afc_klipperscreen_path/KlipperScreen/afc_icons"
-  local default_theme="z-bolt"
-  local theme=""
-  local theme_input=""
   local icon
 
   if [ ! -d "$styles_dir" ]; then
@@ -89,44 +108,26 @@ function choose_theme_and_link_icons() {
     return 1
   fi
 
-  local themes=()
-  while IFS= read -r -d $'\0' dir; do
-    themes+=("$(basename "$dir")")
-  done < <(find "$styles_dir" -mindepth 1 -maxdepth 1 -type d -print0)
-
-  echo "[INFO] Available themes:"
-  for i in "${!themes[@]}"; do
-    echo "  $((i+1))) ${themes[$i]}"
-  done
-
-  read -rp "[INPUT] Choose a theme [default: $default_theme]: " theme_input
-
-  if [[ -z "$theme_input" ]]; then
-    theme="$default_theme"
-  elif [[ "$theme_input" =~ ^[0-9]+$ && "$theme_input" -ge 1 && "$theme_input" -le "${#themes[@]}" ]]; then
-    theme="${themes[$((theme_input - 1))]}"
-  else
-    theme="$theme_input"
-  fi
-
-  # Final check to ensure theme exists
-  if [[ ! -d "$styles_dir/$theme" ]]; then
-    echo "[ERROR] Invalid theme: $theme"
+  if [ ! -d "$icons_dir" ]; then
+    echo "[ERROR] Icons directory not found: $icons_dir"
     return 1
   fi
 
-  local theme_images_dir="$styles_dir/$theme/images"
-  mkdir -p "$theme_images_dir"
-
-  echo "[INFO] Linking icons from: $icons_dir → $theme_images_dir"
+  echo "[INFO] Linking icons to all themes in: $styles_dir"
 
   shopt -s nullglob
-  for icon in "$icons_dir"/*.svg "$icons_dir"/*.png; do
-    ln -sf "$icon" "$theme_images_dir/"
+  for theme_dir in "$styles_dir"/*/; do
+    local theme_images_dir="$theme_dir/images"
+    mkdir -p "$theme_images_dir"
+
+    echo "[INFO] Linking icons to theme: $(basename "$theme_dir")"
+    for icon in "$icons_dir"/*.svg "$icons_dir"/*.png; do
+      ln -sf "$icon" "$theme_images_dir/"
+    done
   done
   shopt -u nullglob
 
-  echo "[INFO] Icons linked into theme '$theme'"
+  echo "[INFO] Icons linked to all themes."
 }
 
 function install_files() {
@@ -259,7 +260,7 @@ main() {
   fi
   install_files
   ensure_afc_config "$klipperscreen_conf_file"
-  choose_theme_and_link_icons
+  link_icons
   echo "[INFO] AFC-Klipper-Screen-Add-On installed successfully."
   echo "[INFO] Please restart KlipperScreen to apply changes."
 }
