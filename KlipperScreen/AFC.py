@@ -709,6 +709,9 @@ class Panel(ScreenPanel):
                 lane_box.get_style_context().add_class("button_active")
 
                 lane_info_box = self.create_lane_info_box(lane)
+                # Keep the stable container so status refreshes can reattach the
+                # lane info grid even if the old grid has already been removed.
+                self.lane_widgets[f"{lane.name}_info_box"] = lane_info_box
                 lane_info_box.set_margin_end(5)
                 lane_info_box.set_margin_start(5)
                 lane_info_box.set_margin_top(5)
@@ -1935,18 +1938,11 @@ class Panel(ScreenPanel):
             parent = old_grid.get_parent() if old_grid else None
             if old_grid and parent:
                 parent.remove(old_grid)
-            # Rebuild parent if lost
+            # Rebuild parent if lost.  The lane info box is stable across grid
+            # replacements; use it instead of the old pseudo-code reference to
+            # an undefined ``unit_expander``.
             if not parent:
-                # Find the unit and re-add the lane frame/grid to the unit's lane_grid
-                for unit in self.afc_units:
-                    for l in unit.lanes:
-                        if l.name == lane.name:
-                            # Find the unit_expander and lane_grid
-                            # This is pseudo-code, you may need to adapt it:
-                            for child in unit_expander.get_children():
-                                if isinstance(child, AutoGrid):
-                                    parent = child
-                                    break
+                parent = self.lane_widgets.get(f"{lane.name}_info_box")
             new_grid = self.create_lane_info_grid(lane, lane_name, status)
             if parent:
                 parent.add(new_grid)
