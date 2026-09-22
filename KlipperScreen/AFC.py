@@ -244,6 +244,8 @@ class Panel(ScreenPanel):
         self.last_drop_time = datetime.now()
         self.hub_states = {}  # Track the current state of each hub
         self.selected_lane = None
+        self.spoolman_request = 0
+        self.spoolman_pending = False
         self.selected_color = "#000000"
         self.selected_type = None
         self.selected_weight = 0
@@ -459,6 +461,7 @@ class Panel(ScreenPanel):
         self.update_ui(afc_data)
 
     def enable_buttons(self, enable):
+        self.update_spoolman_buttons()
         if not hasattr(self, "action_buttons") or not self.action_buttons:
             return
         for button in self.action_buttons:
@@ -475,6 +478,7 @@ class Panel(ScreenPanel):
         self.enable_buttons(self._printer.state in ("ready", "paused"))
 
     def deactivate(self):
+        self.spoolman_request += 1
         self.update_info = False
         self.stop_sensor_poll()
         self.enable_buttons(False)
@@ -934,7 +938,12 @@ class Panel(ScreenPanel):
         self._gtk.remove_dialog(dialog)
         lane = self.selected_lane
         if response_id == RESPONSE_LOAD:
-            self._screen._send_action(dialog, "printer.gcode.script", {"script": f"CHANGE_TOOL LANE={lane.name}"})
+            # SET_MAP swaps the selected lane with the lane currently mapped to
+            # T0, so the loaded lane remains the active T0 lane for temperature
+            # and purge macros.
+            self._screen._send_action(dialog, "printer.gcode.script", {
+                "script": f"SET_MAP LANE={lane.name} MAP=T0\nCHANGE_TOOL LANE={lane.name}"
+            })
         elif response_id == RESPONSE_UNLOAD:
             self._screen._send_action(dialog, "printer.gcode.script", {"script": "TOOL_UNLOAD"})
         elif response_id == RESPONSE_EJECT:
@@ -1219,6 +1228,8 @@ class Panel(ScreenPanel):
         """
         Switch to the lane move grid.
         """
+        self.spoolman_request += 1
+        self._screen.remove_keyboard()
         self.screen_stack.set_visible_child_name("main_grid")
 
     def show_sensor_grid(self, button):
@@ -1232,8 +1243,9 @@ class Panel(ScreenPanel):
         """
         Switch to the selector grid and populate input fields with the lane's information.
         """
-        if self.spoolman is not None:
-            self._screen.show_popup_message(_("Spoolman not currently supported, manual spool set available"),2)
+        if self.spoolman:
+            self.show_spoolman_selector(lane)
+            return
 
         logging.info(f"Switching to selector grid for lane: {lane.name}")
         self.selected_lane = lane  # Store the selected lane
@@ -1646,6 +1658,16 @@ class Panel(ScreenPanel):
                     if lane.material != lane_data.get("material", lane.material):
                         lane.material = lane_data.get("material", lane.material)
                         self.update_lane_material(lane)
+
+                    new_spool_id = int(lane_data.get("spool_id", lane.spool_id) or 0)
+                    if lane.spool_id != new_spool_id:
+                        lane.spool_id = new_spool_id
+                        if (self.selected_lane is lane
+                            and getattr(self, "spoolman_selector_ready", False)):
+                            self.labels["spoolman_lane"].set_text(
+                                f'{lane.name} — {_("Spool ID")}: {lane.spool_id or _("None")}'
+                            )
+                            self.update_spoolman_buttons()
 
                     new_weight = round(float(lane_data.get("weight", lane.weight) or 0))
                     if lane.weight != new_weight:
@@ -2258,6 +2280,162 @@ class Panel(ScreenPanel):
     ##################
     # Spool Selector #
     ##################
+
+    def show_spoolman_selector(self, lane):
+        if not getattr(self, "spoolman_selector_ready", False):
+            old_page = self.screen_stack.get_child_by_name("spoolman_selector")
+            if old_page is not None:
+                self.screen_stack.remove(old_page)
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=5)
+            self.labels["spoolman_lane"] = Gtk.Label()
+            box.pack_start(self.labels["spoolman_lane"], False, False, 0)
+            self.spoolman_model = Gtk.ListStore(int, str)
+            self.spoolman_tree = Gtk.TreeView(model=self.spoolman_model)
+            renderer = Gtk.CellRendererText()
+            renderer.set_property("wrap-mode", Pango.WrapMode.WORD_CHAR)
+            renderer.set_property("wrap-width", max(150, self._screen.width - 80))
+            spool_column = Gtk.TreeViewColumn(_("Spool"), renderer)
+            spool_column.set_cell_data_func(renderer, self._set_spoolman_cell)
+            self.spoolman_tree.append_column(spool_column)
+            selection = self.spoolman_tree.get_selection()
+            selection.set_mode(Gtk.SelectionMode.SINGLE)
+            selection.connect("changed", self.update_spoolman_buttons)
+            scroll = self._gtk.ScrolledWindow()
+            scroll.add(self.spoolman_tree)
+            box.pack_start(scroll, True, True, 0)
+            self.labels["spoolman_status"] = Gtk.Label(wrap=True)
+            box.pack_start(self.labels["spoolman_status"], False, False, 0)
+            buttons = Gtk.Box(homogeneous=True)
+            for name, icon, label, callback in (
+                ("back", "back", _("Back"), self.show_main_grid),
+                ("refresh", "refresh", _("Refresh"), self.load_spoolman_spools),
+                ("clear", "cancel", _("Clear"), self.clear_spoolman_lane),
+                ("assign", "complete", _("Assign"), self.assign_spoolman_lane),
+            ):
+                button = self._gtk.Button(icon, label)
+                button.connect("clicked", callback)
+                self.buttons[f"spoolman_{name}"] = button
+                buttons.pack_start(button, True, True, 0)
+            box.pack_start(buttons, False, False, 0)
+            self.screen_stack.add_named(box, "spoolman_selector")
+            box.show_all()
+            self.spoolman_selector_ready = True
+        self.selected_lane = lane
+        spoolman_lane_label = self.labels.get("spoolman_lane")
+        if spoolman_lane_label is None:
+            # A reconnect or panel rebuild can leave the readiness flag from an
+            # earlier instance while the label dictionary belongs to a fresh one.
+            self.spoolman_selector_ready = False
+            return self.show_spoolman_selector(lane)
+        spoolman_lane_label.set_text(
+            f'{lane.name} — {_("Spool ID")}: {lane.spool_id or _("None")}'
+        )
+        self._screen.remove_keyboard()
+        self.screen_stack.set_visible_child_name("spoolman_selector")
+        self.load_spoolman_spools()
+
+    def _set_spoolman_cell(self, column, cell, model, it, data):
+        """Render the picker row with an explicit, high-contrast selection."""
+        cell.set_property("text", model.get_value(it, 1))
+        selected = self.spoolman_tree.get_selection().path_is_selected(model.get_path(it))
+        if selected:
+            cell.set_property("cell-background-rgba", Gdk.RGBA(0.12, 0.42, 0.78, 1.0))
+            cell.set_property("foreground-rgba", Gdk.RGBA(1.0, 1.0, 1.0, 1.0))
+        else:
+            cell.set_property("cell-background-rgba", None)
+            cell.set_property("foreground-rgba", None)
+
+    def update_spoolman_buttons(self, *args):
+        if "spoolman_assign" not in self.buttons:
+            return
+        _, selected = self.spoolman_tree.get_selection().get_selected()
+        enabled = not self.spoolman_pending and self._printer.state in ("ready", "paused")
+        self.buttons["spoolman_assign"].set_sensitive(enabled and selected is not None)
+        self.buttons["spoolman_clear"].set_sensitive(enabled and bool(self.selected_lane.spool_id))
+        self.buttons["spoolman_refresh"].set_sensitive(not self.spoolman_pending)
+
+    def load_spoolman_spools(self, *args):
+        self.spoolman_request += 1
+        request = self.spoolman_request
+        self.spoolman_pending = True
+        self.spoolman_model.clear()
+        self.labels["spoolman_status"].set_text(_("Loading spools…"))
+        self.update_spoolman_buttons()
+        # Use the websocket directly so a disconnected request can also be reported.
+        sent = self._screen._ws.send_method("server.spoolman.proxy", {
+            "request_method": "GET", "path": "/v1/spool",
+            "query": "allow_archived=false", "use_v2_response": True,
+        }, self.spoolman_spools_received, request)
+        if not sent:
+            self.spoolman_spools_received(None, None, None, request)
+
+    def spoolman_spools_received(self, response, method, params, request):
+        if request != self.spoolman_request:
+            return
+        self.spoolman_pending = False
+        result = response.get("result") if isinstance(response, dict) and "error" not in response else None
+        spools = result.get("response") if isinstance(result, dict) and not result.get("error") else None
+        if not isinstance(spools, list):
+            self.labels["spoolman_status"].set_text(_("Unable to load spools. Check Spoolman and refresh."))
+        else:
+            for spool in spools:
+                if not isinstance(spool, dict) or type(spool.get("id")) is not int or spool["id"] <= 0:
+                    continue
+                if spool.get("archived"):
+                    continue
+                filament = spool.get("filament") or {}
+                vendor = filament.get("vendor") or {}
+                name = " ".join(str(value) for value in (
+                    vendor.get("name"), filament.get("name"), filament.get("material")
+                ) if value)
+                weight = spool.get("remaining_weight")
+                details = f'#{spool["id"]} {name}'
+                if weight is not None:
+                    details += f" — {weight} g"
+                lanes = [lane.name for lane in self.afc_lane_data if lane.spool_id == spool["id"]]
+                if lanes:
+                    details += f' ({", ".join(lanes)})'
+                self.spoolman_model.append([spool["id"], details])
+            self.labels["spoolman_status"].set_text(
+                _("Select a spool to assign to this lane.") if len(self.spoolman_model) else _("No spools found.")
+            )
+        self.update_spoolman_buttons()
+
+    def assign_spoolman_lane(self, button):
+        model, selected = self.spoolman_tree.get_selection().get_selected()
+        if selected is not None:
+            self.set_spoolman_lane(model[selected][0])
+
+    def clear_spoolman_lane(self, button):
+        self.set_spoolman_lane('""')
+
+    def set_spoolman_lane(self, spool_id):
+        if self.spoolman_pending or self._printer.state not in ("ready", "paused"):
+            return
+        self.spoolman_pending = True
+        self.update_spoolman_buttons()
+        self.labels["spoolman_status"].set_text(_("Updating lane…"))
+        # AFC owns metadata, duplicate checks, persistence and the active spool.
+        sent = self._screen._ws.send_method("printer.gcode.script", {
+            "script": f"SET_SPOOL_ID LANE={self.selected_lane.name} SPOOL_ID={spool_id}"
+        }, self.spoolman_lane_updated, self.spoolman_request)
+        if not sent:
+            self.spoolman_lane_updated(None, None, None, self.spoolman_request)
+
+    def spoolman_lane_updated(self, response, method, params, request):
+        if request != self.spoolman_request:
+            return
+        self.spoolman_pending = False
+        if not isinstance(response, dict) or "error" in response or "result" not in response:
+            self.labels["spoolman_status"].set_text(_("Unable to update lane. Check the printer and retry."))
+            self.update_spoolman_buttons()
+            return
+        # A command reply is not proof of assignment: display AFC's actual state.
+        if not self.status_pending:
+            self.status_pending = True
+            if not self.request_afc_status(self.refresh_afc_status):
+                self.status_pending = False
+        self.show_main_grid(None)
 
     def create_spool_layout(self):
         """

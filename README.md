@@ -70,6 +70,23 @@ info_tags:
     desc=AFC KlipperScreen Add On
 ```
 
+## Spoolman lane assignment
+
+When Spoolman is configured in AFC and Moonraker, opening a lane's spool editor
+shows non-archived Spoolman spools. Select a spool and tap **Assign**, or tap
+**Clear** to remove the lane's assignment. **Refresh** reloads the list.
+Existing lane assignments are shown beside each spool.
+
+Assignments use AFC's `SET_SPOOL_ID` command. AFC remains responsible for spool
+metadata, duplicate assignments, persistence, and the active spool when loading
+or unloading a tool. Without Spoolman, the manual spool editor remains available.
+
+The selector tests require Python 3, GTK 3/PyGObject, and a display (or Xvfb):
+
+```bash
+xvfb-run -a python3 -m unittest discover -s tests -v
+```
+
 # Example Images
 ## Main Panel
 
