@@ -386,7 +386,7 @@ class Panel(ScreenPanel):
             for lane_name, lane_data in unit_data.items():
                 logging.info(f"Checking lane: {lane_name}")
 
-                if not isinstance(lane_data, dict) or not lane_name.startswith("lane"):
+                if not isinstance(lane_data, dict) or lane_name == "system":
                     logging.info(f"Skipping non-lane entry: {lane_name}")
                     continue
 
